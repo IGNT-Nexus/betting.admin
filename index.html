@@ -1,0 +1,1242 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LoL決勝 ベッティング管理画面 - 完全版</title>
+    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useCallback, useRef } = React;
+
+        // データストア（実際のAPIと同じ構造）
+        const dataStore = {
+            matches: [
+                { 
+                    id: 1, 
+                    name: '第1試合', 
+                    status: 'accepting',
+                    seriesStatus: 'not_started', // シリーズ全体のお題状態
+                    draft: { top: '', jungle: '', mid: '', bottom: '', support: '' }
+                },
+                { 
+                    id: 2, 
+                    name: '第2試合', 
+                    status: 'not_started',
+                    draft: { top: '', jungle: '', mid: '', bottom: '', support: '' }
+                },
+                { 
+                    id: 3, 
+                    name: '第3試合', 
+                    status: 'not_started',
+                    draft: { top: '', jungle: '', mid: '', bottom: '', support: '' }
+                },
+                { 
+                    id: 4, 
+                    name: '第4試合', 
+                    status: 'not_started',
+                    draft: { top: '', jungle: '', mid: '', bottom: '', support: '' }
+                },
+                { 
+                    id: 5, 
+                    name: '第5試合', 
+                    status: 'not_started',
+                    draft: { top: '', jungle: '', mid: '', bottom: '', support: '' }
+                }
+            ],
+            matchQuestions: {},
+            seriesQuestions: [
+                { id: 's1', title: '決勝の勝敗を予想', status: 'accepting', choices: ['T1', 'KT'], result: null },
+                { id: 's2', title: '決勝MVPを予想', status: 'accepting', choices: ['Doran', 'Oner', 'Faker', 'Gumayusi', 'Keria', 'PerfecT', 'Cuzz', 'Bdd', 'deokdam', 'Peter'], result: null },
+                { id: 's3', title: 'バロン総撃破数を予想', status: 'accepting', choices: ['5回以下', '6-7回', '8-9回', '10-11回', '12回以上'], result: null },
+                { id: 's4', title: 'エルダードラゴン総撃破数を予想', status: 'accepting', choices: ['0回', '1回', '2回', '3回', '4回以上'], result: null },
+                { id: 's5', title: 'シャコがピックされるか', status: 'accepting', choices: ['はい', 'いいえ'], result: null }
+            ],
+            operationHistory: [],
+            lastUpdate: Date.now()
+        };
+
+        // 各試合のお題を初期化
+        for (let i = 1; i <= 5; i++) {
+            dataStore.matchQuestions[i] = [
+                { id: `m${i}-1`, matchId: i, title: '試合の勝者を予想', status: 'accepting', choices: ['T1', 'KT'], result: null },
+                { id: `m${i}-2`, matchId: i, title: '試合のMVPを予想', status: 'accepting', choices: ['Doran', 'Oner', 'Faker', 'Gumayusi', 'Keria', 'PerfecT', 'Cuzz', 'Bdd', 'deokdam', 'Peter'], result: null },
+                { id: `m${i}-3`, matchId: i, title: '試合時間を予想', status: 'accepting', choices: ['25分未満', '25-30分', '30-35分', '35-40分', '40分以上'], result: null },
+                { id: `m${i}-4`, matchId: i, title: 'ファーストブラッドを取るチーム', status: 'accepting', choices: ['T1', 'KT'], result: null },
+                { id: `m${i}-5`, matchId: i, title: 'ファーストタワーを破壊するチーム', status: 'accepting', choices: ['T1', 'KT'], result: null }
+            ];
+        }
+
+        // API シミュレーション（リアルタイム反映対応）
+        const api = {
+            // データ取得（ポーリング用）
+            getMatches: async () => {
+                const matches = dataStore.matches.map(match => {
+                    const questions = dataStore.matchQuestions[match.id] || [];
+                    const questionsStatus = {
+                        accepting: questions.filter(q => q.status === 'accepting').length,
+                        closed: questions.filter(q => q.status === 'closed').length,
+                        settled: questions.filter(q => q.status === 'settled').length,
+                        void: questions.filter(q => q.status === 'void').length
+                    };
+                    
+                    // シリーズ全体のお題状態も含める
+                    const seriesQuestionsStatus = {
+                        accepting: dataStore.seriesQuestions.filter(q => q.status === 'accepting').length,
+                        closed: dataStore.seriesQuestions.filter(q => q.status === 'closed').length,
+                        settled: dataStore.seriesQuestions.filter(q => q.status === 'settled').length,
+                        void: dataStore.seriesQuestions.filter(q => q.status === 'void').length
+                    };
+
+                    return { 
+                        ...match, 
+                        questionsStatus,
+                        questionsCount: questions.length
+                    };
+                });
+
+                return {
+                    matches,
+                    seriesQuestions: {
+                        status: dataStore.seriesQuestions.every(q => q.status === 'closed' || q.status === 'settled' || q.status === 'void') ? 'closed' : 'accepting',
+                        count: dataStore.seriesQuestions.length,
+                        details: {
+                            accepting: dataStore.seriesQuestions.filter(q => q.status === 'accepting').length,
+                            closed: dataStore.seriesQuestions.filter(q => q.status === 'closed').length,
+                            settled: dataStore.seriesQuestions.filter(q => q.status === 'settled').length,
+                            void: dataStore.seriesQuestions.filter(q => q.status === 'void').length
+                        }
+                    },
+                    lastUpdate: dataStore.lastUpdate
+                };
+            },
+
+            getMatchDetail: async (matchId) => {
+                const match = dataStore.matches.find(m => m.id === matchId);
+                const questions = dataStore.matchQuestions[matchId] || [];
+                return {
+                    match,
+                    questions,
+                    draft: match?.draft || { top: '', jungle: '', mid: '', bottom: '', support: '' },
+                    lastUpdate: dataStore.lastUpdate
+                };
+            },
+
+            getSeriesQuestions: async () => {
+                return { 
+                    questions: dataStore.seriesQuestions,
+                    lastUpdate: dataStore.lastUpdate
+                };
+            },
+
+            getStats: async () => {
+                let totalQuestions = 0;
+                let pendingResults = 0;
+                let voidQuestions = 0;
+                let acceptingQuestions = 0;
+
+                // 試合のお題をカウント
+                for (const matchId in dataStore.matchQuestions) {
+                    const questions = dataStore.matchQuestions[matchId];
+                    totalQuestions += questions.length;
+                    acceptingQuestions += questions.filter(q => q.status === 'accepting').length;
+                    pendingResults += questions.filter(q => q.status === 'closed').length;
+                    voidQuestions += questions.filter(q => q.status === 'void').length;
+                }
+
+                // シリーズのお題をカウント
+                totalQuestions += dataStore.seriesQuestions.length;
+                acceptingQuestions += dataStore.seriesQuestions.filter(q => q.status === 'accepting').length;
+                pendingResults += dataStore.seriesQuestions.filter(q => q.status === 'closed').length;
+                voidQuestions += dataStore.seriesQuestions.filter(q => q.status === 'void').length;
+
+                return {
+                    totalQuestions,
+                    acceptingQuestions,
+                    pendingResults,
+                    voidQuestions,
+                    lastUpdate: dataStore.lastUpdate
+                };
+            },
+
+            // 操作系API
+            closeQuestion: async (questionId) => {
+                let question = null;
+                
+                // 試合のお題から検索
+                for (const matchId in dataStore.matchQuestions) {
+                    question = dataStore.matchQuestions[matchId].find(q => q.id === questionId);
+                    if (question) break;
+                }
+                
+                // シリーズのお題から検索
+                if (!question) {
+                    question = dataStore.seriesQuestions.find(q => q.id === questionId);
+                }
+                
+                if (question && question.status === 'accepting') {
+                    const previousStatus = question.status;
+                    question.status = 'closed';
+                    dataStore.lastUpdate = Date.now();
+                    
+                    // 履歴に追加
+                    dataStore.operationHistory.unshift({
+                        id: Date.now(),
+                        type: 'close',
+                        questionId,
+                        previousStatus,
+                        timestamp: new Date()
+                    });
+                    
+                    return { success: true, question };
+                }
+                
+                throw new Error('Question not found or already closed');
+            },
+
+            closeAllMatchQuestions: async (matchId) => {
+                const questions = dataStore.matchQuestions[matchId];
+                if (questions) {
+                    const closedQuestions = [];
+                    questions.forEach(q => {
+                        if (q.status === 'accepting') {
+                            closedQuestions.push({ id: q.id, previousStatus: q.status });
+                            q.status = 'closed';
+                        }
+                    });
+                    
+                    if (closedQuestions.length > 0) {
+                        dataStore.lastUpdate = Date.now();
+                        dataStore.operationHistory.unshift({
+                            id: Date.now(),
+                            type: 'close-all-match',
+                            matchId,
+                            closedQuestions,
+                            timestamp: new Date()
+                        });
+                    }
+                    
+                    return { success: true, closedCount: closedQuestions.length };
+                }
+                throw new Error('Match not found');
+            },
+
+            closeAllSeriesQuestions: async () => {
+                const closedQuestions = [];
+                dataStore.seriesQuestions.forEach(q => {
+                    if (q.status === 'accepting') {
+                        closedQuestions.push({ id: q.id, previousStatus: q.status });
+                        q.status = 'closed';
+                    }
+                });
+                
+                if (closedQuestions.length > 0) {
+                    dataStore.lastUpdate = Date.now();
+                    dataStore.operationHistory.unshift({
+                        id: Date.now(),
+                        type: 'close-all-series',
+                        closedQuestions,
+                        timestamp: new Date()
+                    });
+                }
+                
+                return { success: true, closedCount: closedQuestions.length };
+            },
+
+            reopenQuestion: async (questionId) => {
+                let question = null;
+                
+                for (const matchId in dataStore.matchQuestions) {
+                    question = dataStore.matchQuestions[matchId].find(q => q.id === questionId);
+                    if (question) break;
+                }
+                
+                if (!question) {
+                    question = dataStore.seriesQuestions.find(q => q.id === questionId);
+                }
+                
+                if (question && question.status === 'closed') {
+                    question.status = 'accepting';
+                    dataStore.lastUpdate = Date.now();
+                    return { success: true, question };
+                }
+                
+                throw new Error('Question not found or not closed');
+            },
+
+            settleQuestion: async (questionId, winnerId) => {
+                let question = null;
+                
+                for (const matchId in dataStore.matchQuestions) {
+                    question = dataStore.matchQuestions[matchId].find(q => q.id === questionId);
+                    if (question) break;
+                }
+                
+                if (!question) {
+                    question = dataStore.seriesQuestions.find(q => q.id === questionId);
+                }
+                
+                if (question) {
+                    const previousStatus = question.status;
+                    const previousResult = question.result;
+                    question.status = 'settled';
+                    question.result = winnerId;
+                    dataStore.lastUpdate = Date.now();
+                    
+                    dataStore.operationHistory.unshift({
+                        id: Date.now(),
+                        type: 'settle',
+                        questionId,
+                        previousStatus,
+                        previousResult,
+                        winnerId,
+                        timestamp: new Date()
+                    });
+                    
+                    return { success: true, question };
+                }
+                
+                throw new Error('Question not found');
+            },
+
+            unsettleQuestion: async (questionId) => {
+                let question = null;
+                
+                for (const matchId in dataStore.matchQuestions) {
+                    question = dataStore.matchQuestions[matchId].find(q => q.id === questionId);
+                    if (question) break;
+                }
+                
+                if (!question) {
+                    question = dataStore.seriesQuestions.find(q => q.id === questionId);
+                }
+                
+                if (question && question.status === 'settled') {
+                    question.status = 'closed';
+                    question.result = null;
+                    dataStore.lastUpdate = Date.now();
+                    return { success: true, question };
+                }
+                
+                throw new Error('Question not found or not settled');
+            },
+
+            voidQuestion: async (questionId) => {
+                let question = null;
+                
+                for (const matchId in dataStore.matchQuestions) {
+                    question = dataStore.matchQuestions[matchId].find(q => q.id === questionId);
+                    if (question) break;
+                }
+                
+                if (!question) {
+                    question = dataStore.seriesQuestions.find(q => q.id === questionId);
+                }
+                
+                if (question) {
+                    const previousStatus = question.status;
+                    const previousResult = question.result;
+                    question.status = 'void';
+                    question.result = null;
+                    dataStore.lastUpdate = Date.now();
+                    
+                    dataStore.operationHistory.unshift({
+                        id: Date.now(),
+                        type: 'void',
+                        questionId,
+                        previousStatus,
+                        previousResult,
+                        timestamp: new Date()
+                    });
+                    
+                    return { success: true, question };
+                }
+                
+                throw new Error('Question not found');
+            },
+
+            unvoidQuestion: async (questionId) => {
+                let question = null;
+                
+                for (const matchId in dataStore.matchQuestions) {
+                    question = dataStore.matchQuestions[matchId].find(q => q.id === questionId);
+                    if (question) break;
+                }
+                
+                if (!question) {
+                    question = dataStore.seriesQuestions.find(q => q.id === questionId);
+                }
+                
+                if (question && question.status === 'void') {
+                    question.status = 'closed';
+                    dataStore.lastUpdate = Date.now();
+                    return { success: true, question };
+                }
+                
+                throw new Error('Question not found or not void');
+            },
+
+            voidAllMatchQuestions: async (matchId) => {
+                const questions = dataStore.matchQuestions[matchId];
+                if (questions) {
+                    const voidedQuestions = [];
+                    questions.forEach(q => {
+                        if (q.status !== 'void') {
+                            voidedQuestions.push({ 
+                                id: q.id, 
+                                previousStatus: q.status,
+                                previousResult: q.result
+                            });
+                            q.status = 'void';
+                            q.result = null;
+                        }
+                    });
+                    
+                    if (voidedQuestions.length > 0) {
+                        dataStore.lastUpdate = Date.now();
+                        dataStore.operationHistory.unshift({
+                            id: Date.now(),
+                            type: 'void-all-match',
+                            matchId,
+                            voidedQuestions,
+                            timestamp: new Date()
+                        });
+                    }
+                    
+                    return { success: true, voidedCount: voidedQuestions.length };
+                }
+                throw new Error('Match not found');
+            },
+
+            saveDraft: async (matchId, draft) => {
+                const match = dataStore.matches.find(m => m.id === matchId);
+                if (match) {
+                    match.draft = draft;
+                    dataStore.lastUpdate = Date.now();
+                    return { success: true, draft };
+                }
+                throw new Error('Match not found');
+            },
+
+            // 取り消し操作
+            undoOperation: async (operationId) => {
+                const operation = dataStore.operationHistory.find(op => op.id === operationId);
+                if (!operation) throw new Error('Operation not found');
+
+                switch (operation.type) {
+                    case 'close':
+                        await api.reopenQuestion(operation.questionId);
+                        break;
+                    case 'close-all-match':
+                        for (const q of operation.closedQuestions) {
+                            await api.reopenQuestion(q.id);
+                        }
+                        break;
+                    case 'close-all-series':
+                        for (const q of operation.closedQuestions) {
+                            await api.reopenQuestion(q.id);
+                        }
+                        break;
+                    case 'settle':
+                        await api.unsettleQuestion(operation.questionId);
+                        break;
+                    case 'void':
+                        await api.unvoidQuestion(operation.questionId);
+                        break;
+                    case 'void-all-match':
+                        for (const q of operation.voidedQuestions) {
+                            let question = dataStore.matchQuestions[operation.matchId].find(mq => mq.id === q.id);
+                            if (question) {
+                                question.status = q.previousStatus;
+                                question.result = q.previousResult;
+                            }
+                        }
+                        dataStore.lastUpdate = Date.now();
+                        break;
+                }
+
+                // 履歴から削除
+                dataStore.operationHistory = dataStore.operationHistory.filter(op => op.id !== operationId);
+                return { success: true };
+            }
+        };
+
+        // コンポーネント
+        const Icon = ({ name, size = 20, className = "" }) => {
+            const icons = {
+                'chevron-right': '›',
+                'x': '×',
+                'check': '✓',
+                'alert-circle': '!',
+                'lock': '🔒',
+                'clock': '⏰',
+                'check-circle': '✓',
+                'x-circle': '×',
+                'refresh-cw': '↻',
+                'undo-2': '↶',
+                'alert-triangle': '⚠',
+                'save': '💾'
+            };
+            return <span className={className} style={{ fontSize: size }}>{icons[name] || '?'}</span>;
+        };
+
+        const Toast = ({ message, type, onClose, action }) => {
+            useEffect(() => {
+                const timer = setTimeout(onClose, action ? 6000 : 3000);
+                return () => clearTimeout(timer);
+            }, [onClose, action]);
+
+            const bgColor = type === 'success' ? 'bg-green-500' : 
+                           type === 'error' ? 'bg-red-500' : 
+                           type === 'warning' ? 'bg-yellow-500' : 'bg-blue-500';
+
+            return (
+                <div className={`fixed top-4 right-4 ${bgColor} text-white px-4 py-3 rounded-lg shadow-lg flex items-center z-50 max-w-md`}>
+                    <span className="flex-1">{message}</span>
+                    {action && (
+                        <button
+                            onClick={action.onClick}
+                            className="ml-3 px-3 py-1 bg-white bg-opacity-20 rounded hover:bg-opacity-30 text-sm"
+                        >
+                            {action.label}
+                        </button>
+                    )}
+                    <button onClick={onClose} className="ml-2">
+                        <Icon name="x" size={20} />
+                    </button>
+                </div>
+            );
+        };
+
+        const StatusBadge = ({ status }) => {
+            const configs = {
+                accepting: { bg: 'bg-green-100', text: 'text-green-800', label: '受付中' },
+                closed: { bg: 'bg-yellow-100', text: 'text-yellow-800', label: '締切済' },
+                settled: { bg: 'bg-blue-100', text: 'text-blue-800', label: '結果確定' },
+                void: { bg: 'bg-gray-100', text: 'text-gray-800', label: '無効' },
+                not_started: { bg: 'bg-gray-100', text: 'text-gray-600', label: '未開始' }
+            };
+            const config = configs[status] || configs.not_started;
+            return (
+                <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${config.bg} ${config.text}`}>
+                    {config.label}
+                </span>
+            );
+        };
+
+        const OperationHistory = ({ history, onUndo }) => {
+            if (history.length === 0) return null;
+
+            const getOperationDescription = (op) => {
+                switch (op.type) {
+                    case 'close': return '締め切り';
+                    case 'close-all-match': return `第${op.matchId}試合一括締め切り`;
+                    case 'close-all-series': return 'シリーズ全体締め切り';
+                    case 'settle': return '結果確定';
+                    case 'void': return '無効化';
+                    case 'void-all-match': return `第${op.matchId}試合一括無効化`;
+                    default: return op.type;
+                }
+            };
+
+            return (
+                <div className="fixed bottom-4 left-4 bg-white rounded-lg shadow-xl p-4 max-w-xs border">
+                    <h3 className="font-semibold text-sm mb-2">操作履歴</h3>
+                    <div className="space-y-1 max-h-48 overflow-y-auto">
+                        {history.slice(0, 5).map(op => (
+                            <div key={op.id} className="flex items-center justify-between text-xs bg-gray-50 p-2 rounded">
+                                <div>
+                                    <div className="font-medium">{getOperationDescription(op)}</div>
+                                    <div className="text-gray-500">
+                                        {new Date(op.timestamp).toLocaleTimeString('ja-JP')}
+                                    </div>
+                                </div>
+                                <button
+                                    onClick={() => onUndo(op.id)}
+                                    className="ml-2 px-2 py-1 bg-yellow-100 text-yellow-700 rounded hover:bg-yellow-200"
+                                >
+                                    取消
+                                </button>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            );
+        };
+
+        // メインアプリケーション
+        const BettingAdminDashboard = () => {
+            const [currentView, setCurrentView] = useState('dashboard');
+            const [matches, setMatches] = useState([]);
+            const [seriesStatus, setSeriesStatus] = useState(null);
+            const [matchDetail, setMatchDetail] = useState(null);
+            const [seriesQuestions, setSeriesQuestions] = useState([]);
+            const [selectedQuestion, setSelectedQuestion] = useState(null);
+            const [toast, setToast] = useState(null);
+            const [loading, setLoading] = useState(false);
+            const [stats, setStats] = useState(null);
+            const [autoRefresh, setAutoRefresh] = useState(true);
+            const [showHistory, setShowHistory] = useState(true);
+            const [draftData, setDraftData] = useState({
+                top: '', jungle: '', mid: '', bottom: '', support: ''
+            });
+            const [selectedDraftMatch, setSelectedDraftMatch] = useState(1);
+            const lastUpdateRef = useRef(0);
+
+            // ポーリング用のデータ取得
+            const loadDashboardData = useCallback(async () => {
+                try {
+                    const [dashboardData, statsData] = await Promise.all([
+                        api.getMatches(),
+                        api.getStats()
+                    ]);
+                    
+                    // データが更新された場合のみ状態を更新
+                    if (dashboardData.lastUpdate > lastUpdateRef.current) {
+                        setMatches(dashboardData.matches);
+                        setSeriesStatus(dashboardData.seriesQuestions);
+                        setStats(statsData);
+                        lastUpdateRef.current = dashboardData.lastUpdate;
+                    }
+                } catch (error) {
+                    if (!autoRefresh) {
+                        showToast('データの取得に失敗しました', 'error');
+                    }
+                }
+            }, [autoRefresh]);
+
+            const loadMatchDetail = useCallback(async (matchId) => {
+                try {
+                    const data = await api.getMatchDetail(matchId);
+                    setMatchDetail(data);
+                    if (data.draft) {
+                        setDraftData(data.draft);
+                    }
+                } catch (error) {
+                    showToast('試合詳細の取得に失敗しました', 'error');
+                }
+            }, []);
+
+            const loadSeriesQuestions = useCallback(async () => {
+                try {
+                    const data = await api.getSeriesQuestions();
+                    setSeriesQuestions(data.questions);
+                } catch (error) {
+                    showToast('シリーズお題の取得に失敗しました', 'error');
+                }
+            }, []);
+
+            // 初期データロードとポーリング設定
+            useEffect(() => {
+                loadDashboardData();
+            }, []);
+
+            // 自動更新（3秒ごと）
+            useEffect(() => {
+                if (!autoRefresh) return;
+
+                const interval = setInterval(() => {
+                    if (currentView === 'dashboard') {
+                        loadDashboardData();
+                    } else if (currentView === 'match' && matchDetail) {
+                        loadMatchDetail(matchDetail.match.id);
+                    } else if (currentView === 'series') {
+                        loadSeriesQuestions();
+                    }
+                }, 3000);
+
+                return () => clearInterval(interval);
+            }, [autoRefresh, currentView, matchDetail, loadDashboardData, loadMatchDetail, loadSeriesQuestions]);
+
+            const showToast = (message, type = 'info', action = null) => {
+                setToast({ message, type, action });
+            };
+
+            // 操作関数
+            const handleCloseQuestion = async (questionId, questionTitle) => {
+                try {
+                    await api.closeQuestion(questionId);
+                    showToast(`「${questionTitle}」を締め切りました`, 'success', {
+                        label: '取り消す',
+                        onClick: async () => {
+                            await api.reopenQuestion(questionId);
+                            showToast('締め切りを取り消しました', 'success');
+                            refreshCurrentView();
+                        }
+                    });
+                    await refreshCurrentView();
+                } catch (error) {
+                    showToast('締め切りに失敗しました', 'error');
+                }
+            };
+
+            const handleCloseAllMatchQuestions = async (matchId) => {
+                if (!window.confirm('この試合のすべてのお題を締め切りますか？')) return;
+                
+                try {
+                    const result = await api.closeAllMatchQuestions(matchId);
+                    showToast(`${result.closedCount}件のお題を締め切りました`, 'success');
+                    await refreshCurrentView();
+                } catch (error) {
+                    showToast('一括締め切りに失敗しました', 'error');
+                }
+            };
+
+            const handleCloseAllSeriesQuestions = async () => {
+                if (!window.confirm('シリーズ全体のお題をすべて締め切りますか？\n（第1試合開始時の運用）')) return;
+                
+                try {
+                    const result = await api.closeAllSeriesQuestions();
+                    showToast(`シリーズ全体の${result.closedCount}件のお題を締め切りました`, 'success');
+                    await refreshCurrentView();
+                } catch (error) {
+                    showToast('シリーズ全体の締め切りに失敗しました', 'error');
+                }
+            };
+
+            const handleSettleQuestion = async (questionId, questionTitle, winnerId, winnerName) => {
+                try {
+                    await api.settleQuestion(questionId, winnerId);
+                    showToast(`「${questionTitle}」の結果を「${winnerName}」に確定しました`, 'success', {
+                        label: '取り消す',
+                        onClick: async () => {
+                            await api.unsettleQuestion(questionId);
+                            showToast('結果確定を取り消しました', 'success');
+                            refreshCurrentView();
+                        }
+                    });
+                    setSelectedQuestion(null);
+                    await refreshCurrentView();
+                } catch (error) {
+                    showToast('結果確定に失敗しました', 'error');
+                }
+            };
+
+            const handleVoidQuestion = async (questionId, questionTitle) => {
+                if (!window.confirm('このお題を無効にして返金しますか？')) return;
+                
+                try {
+                    await api.voidQuestion(questionId);
+                    showToast(`「${questionTitle}」を無効化しました（返金処理開始）`, 'warning', {
+                        label: '取り消す',
+                        onClick: async () => {
+                            await api.unvoidQuestion(questionId);
+                            showToast('無効化を取り消しました', 'success');
+                            refreshCurrentView();
+                        }
+                    });
+                    await refreshCurrentView();
+                } catch (error) {
+                    showToast('無効化に失敗しました', 'error');
+                }
+            };
+
+            const handleVoidAllMatchQuestions = async (matchId) => {
+                if (!window.confirm('この試合のすべてのお題を無効にして返金しますか？')) return;
+                
+                try {
+                    const result = await api.voidAllMatchQuestions(matchId);
+                    showToast(`${result.voidedCount}件のお題を無効化しました`, 'warning');
+                    await refreshCurrentView();
+                } catch (error) {
+                    showToast('一括無効化に失敗しました', 'error');
+                }
+            };
+
+            const handleSaveDraft = async () => {
+                try {
+                    await api.saveDraft(selectedDraftMatch, draftData);
+                    showToast('ドラフトを保存しました', 'success');
+                } catch (error) {
+                    showToast('ドラフトの保存に失敗しました', 'error');
+                }
+            };
+
+            const handleUndo = async (operationId) => {
+                try {
+                    await api.undoOperation(operationId);
+                    showToast('操作を取り消しました', 'success');
+                    await refreshCurrentView();
+                } catch (error) {
+                    showToast('取り消しに失敗しました', 'error');
+                }
+            };
+
+            const refreshCurrentView = async () => {
+                if (currentView === 'dashboard') {
+                    await loadDashboardData();
+                } else if (currentView === 'match' && matchDetail) {
+                    await loadMatchDetail(matchDetail.match.id);
+                } else if (currentView === 'series') {
+                    await loadSeriesQuestions();
+                }
+            };
+
+            // ビューコンポーネント
+            const DashboardView = () => (
+                <div className="p-4 max-w-2xl mx-auto">
+                    <div className="flex justify-between items-center mb-6">
+                        <h1 className="text-2xl font-bold">LoL決勝 管理ダッシュボード</h1>
+                        <div className="flex gap-2">
+                            <button
+                                onClick={() => setShowHistory(!showHistory)}
+                                className={`p-2 rounded-lg ${showHistory ? 'bg-purple-100 text-purple-800' : 'bg-gray-100'}`}
+                                title="操作履歴"
+                            >
+                                <Icon name="clock" />
+                            </button>
+                            <button
+                                onClick={() => setAutoRefresh(!autoRefresh)}
+                                className={`p-2 rounded-lg ${autoRefresh ? 'bg-green-100 text-green-800' : 'bg-gray-100'}`}
+                                title={autoRefresh ? '自動更新ON (3秒)' : '自動更新OFF'}
+                            >
+                                <Icon name="refresh-cw" className={autoRefresh ? 'animate-spin' : ''} />
+                            </button>
+                        </div>
+                    </div>
+
+                    {stats && (
+                        <div className="grid grid-cols-2 gap-4 mb-6">
+                            <div className="bg-white rounded-lg p-4 border">
+                                <div className="text-sm text-gray-600">全お題数</div>
+                                <div className="text-2xl font-bold">{stats.totalQuestions}</div>
+                            </div>
+                            <div className="bg-white rounded-lg p-4 border">
+                                <div className="text-sm text-gray-600">状態別</div>
+                                <div className="text-sm mt-1">
+                                    <span className="text-green-600">受付中: {stats.acceptingQuestions}</span>
+                                    <span className="text-yellow-600 ml-2">締切済: {stats.pendingResults}</span>
+                                    {stats.voidQuestions > 0 && (
+                                        <span className="text-gray-600 ml-2">無効: {stats.voidQuestions}</span>
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    <div className="space-y-3 mb-6">
+                        <h2 className="font-semibold text-lg">試合管理</h2>
+                        {matches.map(match => (
+                            <button
+                                key={match.id}
+                                onClick={() => {
+                                    loadMatchDetail(match.id);
+                                    setCurrentView('match');
+                                }}
+                                className="w-full bg-white border rounded-lg p-4 text-left hover:bg-gray-50 transition-colors"
+                            >
+                                <div className="flex justify-between items-center">
+                                    <div>
+                                        <h3 className="font-semibold">{match.name}</h3>
+                                        <div className="mt-1 text-sm text-gray-600 flex gap-3">
+                                            {match.questionsStatus.accepting > 0 && (
+                                                <span className="text-green-600">受付中: {match.questionsStatus.accepting}</span>
+                                            )}
+                                            {match.questionsStatus.closed > 0 && (
+                                                <span className="text-yellow-600">締切済: {match.questionsStatus.closed}</span>
+                                            )}
+                                            {match.questionsStatus.settled > 0 && (
+                                                <span className="text-blue-600">確定: {match.questionsStatus.settled}</span>
+                                            )}
+                                            {match.questionsStatus.void > 0 && (
+                                                <span className="text-gray-600">無効: {match.questionsStatus.void}</span>
+                                            )}
+                                        </div>
+                                    </div>
+                                    <Icon name="chevron-right" className="text-gray-400" />
+                                </div>
+                            </button>
+                        ))}
+                    </div>
+
+                    <div className="space-y-3">
+                        <h2 className="font-semibold text-lg">シリーズ全体</h2>
+                        
+                        <div className="bg-white border rounded-lg p-4">
+                            <div className="flex justify-between items-center mb-3">
+                                <div>
+                                    <h3 className="font-semibold">シリーズ全体のお題</h3>
+                                    {seriesStatus && (
+                                        <div className="mt-1 text-sm text-gray-600">
+                                            全{seriesStatus.count}件：
+                                            {seriesStatus.details.accepting > 0 && (
+                                                <span className="text-green-600 ml-2">受付中: {seriesStatus.details.accepting}</span>
+                                            )}
+                                            {seriesStatus.details.closed > 0 && (
+                                                <span className="text-yellow-600 ml-2">締切済: {seriesStatus.details.closed}</span>
+                                            )}
+                                            {seriesStatus.details.settled > 0 && (
+                                                <span className="text-blue-600 ml-2">確定: {seriesStatus.details.settled}</span>
+                                            )}
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                            
+                            <div className="flex gap-2">
+                                <button
+                                    onClick={handleCloseAllSeriesQuestions}
+                                    className="flex-1 bg-yellow-500 text-white py-2 rounded hover:bg-yellow-600"
+                                >
+                                    全て締め切る
+                                </button>
+                                <button
+                                    onClick={() => {
+                                        loadSeriesQuestions();
+                                        setCurrentView('series');
+                                    }}
+                                    className="flex-1 bg-blue-600 text-white py-2 rounded hover:bg-blue-700"
+                                >
+                                    詳細管理
+                                </button>
+                            </div>
+                        </div>
+
+                        <button
+                            onClick={() => setCurrentView('draft')}
+                            className="w-full bg-purple-600 text-white rounded-lg p-4 hover:bg-purple-700"
+                        >
+                            <Icon name="save" className="mr-2" />
+                            フィアレスドラフト入力
+                        </button>
+                    </div>
+                </div>
+            );
+
+            const MatchDetailView = () => {
+                if (!matchDetail) return <div className="p-4 text-center">読み込み中...</div>;
+
+                return (
+                    <div className="p-4 max-w-2xl mx-auto">
+                        <button
+                            onClick={() => setCurrentView('dashboard')}
+                            className="mb-4 text-blue-600 hover:text-blue-800"
+                        >
+                            ← ダッシュボードに戻る
+                        </button>
+
+                        <h2 className="text-xl font-bold mb-4">{matchDetail.match.name} の管理</h2>
+
+                        <div className="grid grid-cols-2 gap-2 mb-6">
+                            <button
+                                onClick={() => handleCloseAllMatchQuestions(matchDetail.match.id)}
+                                className="bg-yellow-500 text-white py-3 rounded-lg hover:bg-yellow-600"
+                            >
+                                全て締め切る
+                            </button>
+                            <button
+                                onClick={() => handleVoidAllMatchQuestions(matchDetail.match.id)}
+                                className="bg-red-500 text-white py-3 rounded-lg hover:bg-red-600"
+                            >
+                                全て無効化
+                            </button>
+                        </div>
+
+                        <div className="space-y-3">
+                            {matchDetail.questions.map(question => (
+                                <QuestionCard
+                                    key={question.id}
+                                    question={question}
+                                    onClose={() => handleCloseQuestion(question.id, question.title)}
+                                    onSettle={() => setSelectedQuestion(question)}
+                                    onVoid={() => handleVoidQuestion(question.id, question.title)}
+                                    onReopen={async () => {
+                                        await api.reopenQuestion(question.id);
+                                        showToast('受付を再開しました', 'success');
+                                        await loadMatchDetail(matchDetail.match.id);
+                                    }}
+                                    onUnsettle={async () => {
+                                        if (window.confirm('結果確定を取り消しますか？')) {
+                                            await api.unsettleQuestion(question.id);
+                                            showToast('結果を取り消しました', 'success');
+                                            await loadMatchDetail(matchDetail.match.id);
+                                        }
+                                    }}
+                                    onUnvoid={async () => {
+                                        if (window.confirm('無効化を取り消しますか？')) {
+                                            await api.unvoidQuestion(question.id);
+                                            showToast('無効化を取り消しました', 'success');
+                                            await loadMatchDetail(matchDetail.match.id);
+                                        }
+                                    }}
+                                />
+                            ))}
+                        </div>
+                    </div>
+                );
+            };
+
+            const SeriesQuestionsView = () => (
+                <div className="p-4 max-w-2xl mx-auto">
+                    <button
+                        onClick={() => setCurrentView('dashboard')}
+                        className="mb-4 text-blue-600 hover:text-blue-800"
+                    >
+                        ← ダッシュボードに戻る
+                    </button>
+
+                    <div className="flex justify-between items-center mb-4">
+                        <h2 className="text-xl font-bold">シリーズ全体のお題管理</h2>
+                        <button
+                            onClick={handleCloseAllSeriesQuestions}
+                            className="bg-yellow-500 text-white px-4 py-2 rounded hover:bg-yellow-600"
+                        >
+                            全て締め切る
+                        </button>
+                    </div>
+
+                    <div className="space-y-3">
+                        {seriesQuestions.map(question => (
+                            <QuestionCard
+                                key={question.id}
+                                question={question}
+                                onClose={() => handleCloseQuestion(question.id, question.title)}
+                                onSettle={() => setSelectedQuestion(question)}
+                                onVoid={() => handleVoidQuestion(question.id, question.title)}
+                                onReopen={async () => {
+                                    await api.reopenQuestion(question.id);
+                                    showToast('受付を再開しました', 'success');
+                                    await loadSeriesQuestions();
+                                }}
+                                onUnsettle={async () => {
+                                    if (window.confirm('結果確定を取り消しますか？')) {
+                                        await api.unsettleQuestion(question.id);
+                                        showToast('結果を取り消しました', 'success');
+                                        await loadSeriesQuestions();
+                                    }
+                                }}
+                                onUnvoid={async () => {
+                                    if (window.confirm('無効化を取り消しますか？')) {
+                                        await api.unvoidQuestion(question.id);
+                                        showToast('無効化を取り消しました', 'success');
+                                        await loadSeriesQuestions();
+                                    }
+                                }}
+                            />
+                        ))}
+                    </div>
+                </div>
+            );
+
+            const DraftInputView = () => (
+                <div className="p-4 max-w-md mx-auto">
+                    <button
+                        onClick={() => setCurrentView('dashboard')}
+                        className="mb-4 text-blue-600 hover:text-blue-800"
+                    >
+                        ← ダッシュボードに戻る
+                    </button>
+
+                    <h2 className="text-xl font-bold mb-4">フィアレスドラフト入力</h2>
+
+                    <div className="mb-4">
+                        <label className="block text-sm font-medium mb-2">試合選択</label>
+                        <select
+                            value={selectedDraftMatch}
+                            onChange={(e) => {
+                                const matchId = parseInt(e.target.value);
+                                setSelectedDraftMatch(matchId);
+                                loadMatchDetail(matchId);
+                            }}
+                            className="w-full border rounded-lg px-3 py-2"
+                        >
+                            {[1, 2, 3, 4, 5].map(i => (
+                                <option key={i} value={i}>第{i}試合</option>
+                            ))}
+                        </select>
+                    </div>
+
+                    <div className="space-y-3">
+                        {[
+                            { key: 'top', label: 'トップ' },
+                            { key: 'jungle', label: 'ジャングル' },
+                            { key: 'mid', label: 'ミッド' },
+                            { key: 'bottom', label: 'ボット' },
+                            { key: 'support', label: 'サポート' }
+                        ].map(({ key, label }) => (
+                            <div key={key}>
+                                <label className="block text-sm font-medium mb-1">{label}</label>
+                                <input
+                                    type="text"
+                                    value={draftData[key]}
+                                    onChange={(e) => setDraftData({ ...draftData, [key]: e.target.value })}
+                                    placeholder="例: ガレン, グウェン"
+                                    className="w-full border rounded-lg px-3 py-2"
+                                />
+                            </div>
+                        ))}
+                    </div>
+
+                    <button
+                        onClick={handleSaveDraft}
+                        className="w-full bg-green-600 text-white py-3 rounded-lg mt-4 hover:bg-green-700"
+                    >
+                        保存する
+                    </button>
+                </div>
+            );
+
+            const ResultInputModal = () => {
+                const [selectedChoice, setSelectedChoice] = useState(null);
+
+                if (!selectedQuestion) return null;
+
+                return (
+                    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+                        <div className="bg-white rounded-lg p-6 max-w-md w-full max-h-[80vh] overflow-y-auto">
+                            <h3 className="text-lg font-bold mb-4">結果入力</h3>
+                            <p className="mb-4">{selectedQuestion.title}</p>
+                            
+                            <div className="space-y-2 mb-6">
+                                {selectedQuestion.choices.map((choice, idx) => (
+                                    <label key={idx} className="flex items-center p-3 border rounded cursor-pointer hover:bg-gray-50">
+                                        <input
+                                            type="radio"
+                                            name="result"
+                                            value={idx}
+                                            checked={selectedChoice === idx}
+                                            onChange={() => setSelectedChoice(idx)}
+                                            className="mr-3"
+                                        />
+                                        <span>{choice}</span>
+                                    </label>
+                                ))}
+                            </div>
+
+                            <div className="flex gap-3">
+                                <button
+                                    onClick={() => {
+                                        setSelectedQuestion(null);
+                                        setSelectedChoice(null);
+                                    }}
+                                    className="flex-1 py-2 border rounded hover:bg-gray-50"
+                                >
+                                    キャンセル
+                                </button>
+                                <button
+                                    onClick={() => {
+                                        if (selectedChoice !== null) {
+                                            handleSettleQuestion(
+                                                selectedQuestion.id,
+                                                selectedQuestion.title,
+                                                selectedChoice,
+                                                selectedQuestion.choices[selectedChoice]
+                                            );
+                                            setSelectedChoice(null);
+                                        }
+                                    }}
+                                    disabled={selectedChoice === null}
+                                    className="flex-1 bg-green-600 text-white py-2 rounded hover:bg-green-700 disabled:opacity-50"
+                                >
+                                    確定する
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                );
+            };
+
+            const QuestionCard = ({ question, onClose, onSettle, onVoid, onReopen, onUnsettle, onUnvoid }) => (
+                <div className="bg-white border rounded-lg p-4">
+                    <div className="flex justify-between items-start mb-3">
+                        <h3 className="font-semibold flex-1">{question.title}</h3>
+                        <StatusBadge status={question.status} />
+                    </div>
+                    
+                    <div className="grid grid-cols-3 gap-2">
+                        {question.status === 'accepting' && (
+                            <>
+                                <button onClick={onClose} className="bg-yellow-100 text-yellow-800 py-2 rounded text-sm hover:bg-yellow-200">
+                                    締め切る
+                                </button>
+                                <button onClick={onSettle} className="bg-blue-100 text-blue-800 py-2 rounded text-sm hover:bg-blue-200">
+                                    結果入力
+                                </button>
+                                <button onClick={onVoid} className="bg-red-100 text-red-800 py-2 rounded text-sm hover:bg-red-200">
+                                    無効化
+                                </button>
+                            </>
+                        )}
+                        {question.status === 'closed' && (
+                            <>
+                                <button onClick={onReopen} className="bg-green-100 text-green-800 py-2 rounded text-sm hover:bg-green-200">
+                                    再開
+                                </button>
+                                <button onClick={onSettle} className="bg-blue-100 text-blue-800 py-2 rounded text-sm hover:bg-blue-200">
+                                    結果入力
+                                </button>
+                                <button onClick={onVoid} className="bg-red-100 text-red-800 py-2 rounded text-sm hover:bg-red-200">
+                                    無効化
+                                </button>
+                            </>
+                        )}
+                        {question.status === 'settled' && (
+                            <button onClick={onUnsettle} className="bg-yellow-100 text-yellow-800 py-2 rounded text-sm hover:bg-yellow-200 col-span-3">
+                                <Icon name="undo-2" size={14} className="inline mr-1" />
+                                結果を取り消す
+                            </button>
+                        )}
+                        {question.status === 'void' && (
+                            <button onClick={onUnvoid} className="bg-yellow-100 text-yellow-800 py-2 rounded text-sm hover:bg-yellow-200 col-span-3">
+                                <Icon name="undo-2" size={14} className="inline mr-1" />
+                                無効化を取り消す
+                            </button>
+                        )}
+                    </div>
+                    
+                    {question.result !== null && question.result !== undefined && (
+                        <div className="mt-2 text-sm text-gray-600">
+                            結果: <span className="font-bold text-blue-600">{question.choices[question.result]}</span>
+                        </div>
+                    )}
+                </div>
+            );
+
+            return (
+                <div className="min-h-screen bg-gray-50">
+                    {currentView === 'dashboard' && <DashboardView />}
+                    {currentView === 'match' && <MatchDetailView />}
+                    {currentView === 'series' && <SeriesQuestionsView />}
+                    {currentView === 'draft' && <DraftInputView />}
+                    
+                    {selectedQuestion && <ResultInputModal />}
+                    
+                    {showHistory && dataStore.operationHistory.length > 0 && (
+                        <OperationHistory 
+                            history={dataStore.operationHistory}
+                            onUndo={handleUndo}
+                        />
+                    )}
+                    
+                    {toast && (
+                        <Toast
+                            message={toast.message}
+                            type={toast.type}
+                            action={toast.action}
+                            onClose={() => setToast(null)}
+                        />
+                    )}
+
+                    {loading && (
+                        <div className="fixed inset-0 bg-black bg-opacity-30 flex items-center justify-center z-50">
+                            <div className="bg-white rounded-lg p-4">
+                                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            );
+        };
+
+        // アプリケーションをレンダリング
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<BettingAdminDashboard />);
+    </script>
+</body>
+</html>
